@@ -21,21 +21,37 @@ start(CompilePath, Opts) ->
         end,
         Deps
     ),
-    LocalDepsDirectories = lists:map(
+    SrcDirs = lists:map(
         fun(Dep) ->
-            AppName = maps:get(app, Dep),
-            <<BaseCompilePath/binary, <<"/">>/binary, (atom_to_binary(AppName))/binary,
-                <<"/ebin">>/binary>>
+            DepOpts = maps:get(opts, Dep),
+            binary:bin_to_list(proplists:get_value(dest, DepOpts))
         end,
         LocalDeps
     ),
+    LocalDepsDirectories = lists:map(
+        fun(Dep) ->
+            erlang:display(Dep),
+            AppName = maps:get(app, Dep),
+            {
+                <<BaseCompilePath/binary, <<"/">>/binary, (atom_to_binary(AppName))/binary,
+                    <<"/ebin">>/binary>>,
+                AppName
+            }
+        end,
+        LocalDeps
+    ),
+    AppName = proplists:get_value(app, mix_project(config)),
+    LocalDepsDirectories2 = LocalDepsDirectories ++ [{CompilePath, AppName}],
+    DepsBeamDirs = lists:map(fun({Dir, _}) -> Dir end, LocalDepsDirectories2),
+    DepsMap = maps:from_list(LocalDepsDirectories2),
 
-    BeamDirs = LocalDepsDirectories ++ [CompilePath],
-    lists:map(
+    BeamDirs = DepsBeamDirs,
+    ModuleAppList = lists:flatmap(
         fun(BeamDir) ->
             case cover:compile_beam_directory(binary:bin_to_list(BeamDir)) of
                 Results when is_list(Results) ->
-                    ok;
+                    AppName2 = maps:get(BeamDir, DepsMap),
+                    lists:map(fun({ok, Module}) -> {Module, AppName2} end, Results);
                 {error, _} ->
                     mix(raise, <<"Failed to cover compile directory">>)
             end
@@ -43,15 +59,19 @@ start(CompilePath, Opts) ->
         BeamDirs
     ),
 
-    AppName = proplists:get_value(app, mix_project(config)),
+    ModuleMapping = maps:from_list(ModuleAppList),
+
     {ok, SrcDir} = file:get_cwd(),
     Summary = proplists:get_bool(summary, Opts),
     Config = #config{
         appname = AppName,
-        sources = [SrcDir],
+        sources = [SrcDir] ++ SrcDirs,
+        module_mapping = ModuleMapping,
         beams = BeamDirs,
         summary = Summary
     },
+
+    erlang:display(Config),
 
     Modules = cover:modules(),
 

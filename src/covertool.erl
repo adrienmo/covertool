@@ -18,9 +18,11 @@
 -include("covertool.hrl").
 -include_lib("xmerl/include/xmerl.hrl").
 
--record(result, {line = {0, 0},
-                 branches = {0, 0},
-                 data = []}).
+-record(result, {
+    line = {0, 0},
+    branches = {0, 0},
+    data = []
+}).
 
 main([]) ->
     usage();
@@ -58,17 +60,24 @@ usage() ->
     ScriptName = escript:script_name(),
     io:format("Usage: ~s [Options]~n", [ScriptName]),
     io:format("Options:~n"),
-    io:format("    -cover   CoverDataFile  Path to the cover exported data set (default: \"all.coverdata\")~n"),
-    io:format("    -output  OutputFile     File to put generated report to (default: \"coverage.xml\")~n"),
+    io:format(
+        "    -cover   CoverDataFile  Path to the cover exported data set (default: \"all.coverdata\")~n"
+    ),
+    io:format(
+        "    -output  OutputFile     File to put generated report to (default: \"coverage.xml\")~n"
+    ),
     io:format("    -ebin    EbinDir        Directory to look for beams (default: \"ebin\")~n"),
     io:format("    -src     SourceDir      Directory to look for sources (default: \"src\")~n"),
     io:format("    -prefix  PrefixLen      Length used for package name (default: 0)~n"),
-    io:format("    -appname AppName        Application name to put in the report (default: \"Application\")~n"),
+    io:format(
+        "    -appname AppName        Application name to put in the report (default: \"Application\")~n"
+    ),
     ok.
 
 % Parse arguments into record
-process_args([], Config) -> Config;
-process_args([[$- | Name] , Value | Args], Config) ->
+process_args([], Config) ->
+    Config;
+process_args([[$- | Name], Value | Args], Config) ->
     NameAtom = list_to_atom(Name),
     process_args(Args, update_config(NameAtom, Value, Config));
 process_args(_Args, _Config) ->
@@ -95,6 +104,7 @@ generate_report(Config, Modules) ->
     AppName = Config#config.appname,
     PrefixLen = Config#config.prefix_len,
     Output = Config#config.output,
+    ModuleMapping = Config#config.module_mapping,
     case Config#config.cover_data of
         no_import ->
             ok;
@@ -104,16 +114,21 @@ generate_report(Config, Modules) ->
     put(src, Config#config.sources),
     put(ebin, Config#config.beams),
     io:format("Generating report '~s'...~n", [Output]),
-    Prolog = ["<?xml version=\"1.0\" encoding=\"utf-8\"?>\n",
-              "<!DOCTYPE coverage SYSTEM \"http://cobertura.sourceforge.net/xml/coverage-04.dtd\">\n"],
+    Prolog = [
+        "<?xml version=\"1.0\" encoding=\"utf-8\"?>\n",
+        "<!DOCTYPE coverage SYSTEM \"http://cobertura.sourceforge.net/xml/coverage-04.dtd\">\n"
+    ],
 
     {MegaSecs, Secs, MicroSecs} = os:timestamp(),
-    Timestamp = MegaSecs * 1000000000 + Secs * 1000 + (MicroSecs div 1000), % in milliseconds
+    % in milliseconds
+    Timestamp = MegaSecs * 1000000000 + Secs * 1000 + (MicroSecs div 1000),
 
-    Version = "1.9.4.1", % emulate Cobertura 1.9.4.1
-    Complexity = 0, % not supported at the moment
+    % emulate Cobertura 1.9.4.1
+    Version = "1.9.4.1",
+    % not supported at the moment
+    Complexity = 0,
 
-    Result = generate_packages(AppName, PrefixLen, Modules),
+    Result = generate_packages(AppName, PrefixLen, Modules, ModuleMapping),
     {LinesCovered, LinesValid} = Result#result.line,
     LineRate = rate(Result#result.line),
 
@@ -122,47 +137,62 @@ generate_report(Config, Modules) ->
 
     Sources = [{source, [filename:absname(SrcDir)]} || SrcDir <- get(src)],
 
-    Root = {coverage, [{timestamp, Timestamp},
-                       {'line-rate', LineRate},
-                       {'lines-covered', LinesCovered},
-                       {'lines-valid', LinesValid},
-                       {'branch-rate', BranchRate},
-                       {'branches-covered', BranchesCovered},
-                       {'branches-valid', BranchesValid},
-                       {complexity, Complexity},
-                       {version, Version}],
-            [{sources, Sources},
-             {packages, Result#result.data}]},
+    Root =
+        {coverage,
+            [
+                {timestamp, Timestamp},
+                {'line-rate', LineRate},
+                {'lines-covered', LinesCovered},
+                {'lines-valid', LinesValid},
+                {'branch-rate', BranchRate},
+                {'branches-covered', BranchesCovered},
+                {'branches-valid', BranchesValid},
+                {complexity, Complexity},
+                {version, Version}
+            ],
+            [
+                {sources, Sources},
+                {packages, Result#result.data}
+            ]},
     Report = xmerl:export_simple([Root], xmerl_xml, [{prolog, Prolog}]),
     write_output(Report, Output),
     if
         Config#config.summary ->
             io:format("Line total: ~s~nBranch total: ~s~n", [
-                                                             percentage(Result#result.line),
-                                                             percentage(Result#result.branches)
-                                                            ]);
+                percentage(Result#result.line),
+                percentage(Result#result.branches)
+            ]);
         true ->
             ok
     end,
     ok.
 
-generate_packages(AppName, PrefixLen, Modules) ->
+generate_packages(_, PrefixLen, Modules, ModuleMapping) ->
+    erlang:display(Modules),
     PackageAndModules =
-        lists:foldl(fun(Module, Acc) ->
-                        PackageName = package_name(AppName, PrefixLen, Module),
-                        case lists:keyfind(PackageName, 1, Acc) of
-                            false ->
-                                [{PackageName, [Module]} | Acc];
-                            {_Key, ModulesInPackage} ->
-                                lists:keyreplace(
-                                  PackageName, 1, Acc,
-                                  {PackageName, [Module|ModulesInPackage]})
-                        end
-                    end, [], Modules),
+        lists:foldl(
+            fun(Module, Acc) ->
+                AppName = maps:get(Module, ModuleMapping),
+                PackageName = package_name(AppName, PrefixLen, Module),
+                case lists:keyfind(PackageName, 1, Acc) of
+                    false ->
+                        [{PackageName, [Module]} | Acc];
+                    {_Key, ModulesInPackage} ->
+                        lists:keyreplace(
+                            PackageName,
+                            1,
+                            Acc,
+                            {PackageName, [Module | ModulesInPackage]}
+                        )
+                end
+            end,
+            [],
+            Modules
+        ),
     Fun = fun({PackageName, ModulesInPackage}, Result) ->
-                  Package = generate_package(PackageName, ModulesInPackage),
-                  {Package#result.data, sum(Result, Package)}
-          end,
+        Package = generate_package(PackageName, ModulesInPackage),
+        {Package#result.data, sum(Result, Package)}
+    end,
     {Packages, Result} = lists:mapfoldl(Fun, #result{}, PackageAndModules),
     Result#result{data = Packages}.
 
@@ -170,35 +200,44 @@ generate_packages(AppName, PrefixLen, Modules) ->
 %% - AppName itself
 %% - source directory
 %% - module prefix (name divided by "_")
-package_name(AppName, PrefixLen, Module)
-    when is_atom(AppName), is_atom(Module) ->
+package_name(AppName, PrefixLen, Module) when
+    is_atom(AppName), is_atom(Module)
+->
     AppNameStr = atom_to_list(AppName),
-    SourceDirs = case lookup_source(Module) of
-                    false ->
+    SourceDirs =
+        case lookup_source(Module) of
+            false ->
+                [];
+            SourceFile ->
+                case filename:dirname(SourceFile) of
+                    "." ->
                         [];
-                    SourceFile ->
-                        case filename:dirname(SourceFile) of
-                            "." ->
-                                [];
-                            DirName ->
-                                string:tokens(DirName, "/")
-                        end
-                end,
-    Prefix = case PrefixLen of
-                 0 ->
-                     "";
-                 _Other ->
-                     lists:sublist(string:tokens(atom_to_list(Module), "_"),
-                                   PrefixLen)
-             end,
+                    DirName ->
+                        string:tokens(DirName, "/")
+                end
+        end,
+    Prefix =
+        case PrefixLen of
+            0 ->
+                "";
+            _Other ->
+                lists:sublist(
+                    string:tokens(atom_to_list(Module), "_"),
+                    PrefixLen
+                )
+        end,
     string:join([AppNameStr] ++ SourceDirs ++ Prefix, ".").
 
 generate_package(PackageName, Modules) ->
     Classes = generate_classes(Modules),
-    Data = {package, [{name, PackageName},
-                      {'line-rate', rate(Classes#result.line)},
-                      {'branch-rate', rate(Classes#result.branches)},
-                      {complexity, 0}],
+    Data =
+        {package,
+            [
+                {name, PackageName},
+                {'line-rate', rate(Classes#result.line)},
+                {'branch-rate', rate(Classes#result.branches)},
+                {complexity, 0}
+            ],
             [{classes, Classes#result.data}]},
     Classes#result{data = Data}.
 
@@ -206,73 +245,101 @@ generate_package(PackageName, Modules) ->
 generate_classes(Modules) ->
     % generate XML for every class, collect summary metric
     Fun = fun(Module, Result) ->
-                  Class = generate_class(Module),
-                  {Class#result.data, sum(Result, Class)}
-          end,
+        Class = generate_class(Module),
+        {Class#result.data, sum(Result, Class)}
+    end,
 
     % Skip modules without sources
     Filter = fun(Module) ->
-                     case lookup_source(Module) of
-                         false -> false;
-                         _Other -> true
-                     end
-             end,
+        case lookup_source(Module) of
+            false -> false;
+            _Other -> true
+        end
+    end,
     Modules2 = lists:filter(Filter, Modules),
     {Classes, Result} = lists:mapfoldl(Fun, #result{}, Modules2),
     Result#result{data = Classes}.
 
 generate_class(Module) ->
     Fun = fun({{_Module, Line}, Value}, Result) ->
-                  Covered = case Value of 0 -> 0; _Other -> 1 end,
-                  LineCoverage = sum(Result#result.line, {Covered, 1}), % add one line to the summary
-                  Data = {line, [{number, Line},
-                                 {hits, Value},
-                                 {branch, "False"}],
-                          []},
-                  {Data, Result#result{line = LineCoverage}}
-          end,
+        Covered =
+            case Value of
+                0 -> 0;
+                _Other -> 1
+            end,
+        % add one line to the summary
+        LineCoverage = sum(Result#result.line, {Covered, 1}),
+        Data =
+            {line,
+                [
+                    {number, Line},
+                    {hits, Value},
+                    {branch, "False"}
+                ],
+                []},
+        {Data, Result#result{line = LineCoverage}}
+    end,
     {ok, Lines0} = cover:analyse(Module, calls, line),
     Lines = dedup(Lines0),
 
     % ignore zero-indexed lines, these are lines for generated code
-    Filter = fun({{_Module, 0}, _}) -> false;
-                (_Other) -> true
-             end,
+    Filter = fun
+        ({{_Module, 0}, _}) -> false;
+        (_Other) -> true
+    end,
     Lines2 = lists:filter(Filter, Lines),
     {LinesData, Result} = lists:mapfoldl(Fun, #result{}, Lines2),
 
-    Data = {class, [{name, Module},
-                    {filename, lookup_source(Module)},
-                    {'line-rate', rate(Result#result.line)},
-                    {'branch-rate', rate(Result#result.branches)},
-                    {complexity, 0}],
-            [{methods, generate_methods(Module, LinesData)},
-             {lines, LinesData}]},
+    Data =
+        {class,
+            [
+                {name, Module},
+                {filename, lookup_source(Module)},
+                {'line-rate', rate(Result#result.line)},
+                {'branch-rate', rate(Result#result.branches)},
+                {complexity, 0}
+            ],
+            [
+                {methods, generate_methods(Module, LinesData)},
+                {lines, LinesData}
+            ]},
     Result#result{data = Data}.
 
 generate_methods(Module, LinesData) ->
-    ResultFun = fun ({line, LineData, _}, Result) ->
-                    Hits = proplists:get_value(hits, LineData, 0),
-                    Covered = case Hits of 0 -> 0; _Other -> 1 end,
-                    LineCoverage = sum(Result#result.line, {Covered, 1}),
-                    Result#result{line = LineCoverage}
-                end,
+    ResultFun = fun({line, LineData, _}, Result) ->
+        Hits = proplists:get_value(hits, LineData, 0),
+        Covered =
+            case Hits of
+                0 -> 0;
+                _Other -> 1
+            end,
+        LineCoverage = sum(Result#result.line, {Covered, 1}),
+        Result#result{line = LineCoverage}
+    end,
 
     {ok, Functions} = cover:analyse(Module, calls, function),
-    MFAs = lists:map(fun (F) -> element(1, F) end, Functions),
-    lists:flatten(lists:map(
-        fun ({_M, F, A} = MFA) ->
+    MFAs = lists:map(fun(F) -> element(1, F) end, Functions),
+    lists:flatten(
+        lists:map(
+            fun({_M, F, A} = MFA) ->
                 case function_lines(MFA, LinesData) of
-                    [] -> [];
+                    [] ->
+                        [];
                     FunLinesData ->
                         Result = lists:foldl(ResultFun, #result{}, FunLinesData),
-                        {method, [{name, F},
-                                  {signature, io_lib:format("~s/~B", [F, A])},
-                                  {'line-rate', rate(Result#result.line)},
-                                  {'branch-rate', rate(Result#result.branches)}],
-                                 [{lines, FunLinesData}]}
+                        {method,
+                            [
+                                {name, F},
+                                {signature, io_lib:format("~s/~B", [F, A])},
+                                {'line-rate', rate(Result#result.line)},
+                                {'branch-rate', rate(Result#result.branches)}
+                            ],
+                            [{lines, FunLinesData}]}
                 end
-        end, MFAs)).
+            end,
+            MFAs
+        )
+    ).
 
 write_output(Report, Output) ->
     io:format("Writing output report '~s'...~n", [Output]),
@@ -287,17 +354,22 @@ write_output(Report, Output) ->
     ok.
 
 % sum metrics
-sum(#result{line = {LineCovered1, LineValid1}, branches = {BranchesCovered1, BranchesValid1}},
-    #result{line = {LineCovered2, LineValid2}, branches = {BranchesCovered2, BranchesValid2}}) ->
-    #result{line = {LineCovered1 + LineCovered2, LineValid1 + LineValid2},
-            branches = {BranchesCovered1 + BranchesCovered2, BranchesValid1 + BranchesValid2}};
+sum(
+    #result{line = {LineCovered1, LineValid1}, branches = {BranchesCovered1, BranchesValid1}},
+    #result{line = {LineCovered2, LineValid2}, branches = {BranchesCovered2, BranchesValid2}}
+) ->
+    #result{
+        line = {LineCovered1 + LineCovered2, LineValid1 + LineValid2},
+        branches = {BranchesCovered1 + BranchesCovered2, BranchesValid1 + BranchesValid2}
+    };
 sum({Covered1, Valid1}, {Covered2, Valid2}) ->
     {Covered1 + Covered2, Valid1 + Valid2}.
 
 rate({_Covered, 0}) -> "0.0";
 rate({Covered, Valid}) -> float_to_list(Covered / Valid, [{decimals, 3}, compact]).
 
-percentage({_Covered, 0}) -> "100.0%";
+percentage({_Covered, 0}) ->
+    "100.0%";
 percentage({Covered, Valid}) ->
     float_to_list(100 * Covered / Valid, [{decimals, 1}, compact]) ++ "%".
 
@@ -323,7 +395,7 @@ relative_to_src_path(AbsPath) ->
     Src = get(src),
     relative_to_src_path(Src, AbsPath).
 
-relative_to_src_path([SrcDir|RDirs], AbsPath) ->
+relative_to_src_path([SrcDir | RDirs], AbsPath) ->
     case lists:prefix(SrcDir, AbsPath) of
         true -> ensure_relative_path(lists:nthtail(length(SrcDir), AbsPath));
         false -> relative_to_src_path(RDirs, AbsPath)
@@ -341,17 +413,25 @@ function_range({M, F, A}) ->
 function_range([EbinDir | RDirs], M, F, A) ->
     Beam = io_lib:format("~s/~s.beam", [EbinDir, M]),
     case beam_lib:chunks(Beam, [abstract_code]) of
-        {error, beam_lib, _} -> function_range(RDirs, M, F, A);
-        {ok, {M, [{abstract_code, no_abstract_code}]}} -> {0, 0};
+        {error, beam_lib, _} ->
+            function_range(RDirs, M, F, A);
+        {ok, {M, [{abstract_code, no_abstract_code}]}} ->
+            {0, 0};
         {ok, {M, [{abstract_code, {_Version, AC}}]}} ->
-            Filter = fun ({function, _, Fun, Ary, _}) ->
-                           not (Fun =:= F andalso Ary =:= A);
-                         (_) -> true
-                     end,
+            Filter = fun
+                ({function, _, Fun, Ary, _}) ->
+                    not (Fun =:= F andalso Ary =:= A);
+                (_) ->
+                    true
+            end,
             case lists:dropwhile(Filter, AC) of
-                [] -> {0, 0}; %% Should never happen unless beam is out of sync
-                [{_, Line, F, A, _}] -> {Line, Line};
-                [{_, Line, F, A, _}, {eof, Next}] -> {Line, Next};
+                %% Should never happen unless beam is out of sync
+                [] ->
+                    {0, 0};
+                [{_, Line, F, A, _}] ->
+                    {Line, Line};
+                [{_, Line, F, A, _}, {eof, Next}] ->
+                    {Line, Next};
                 [{_, Line, F, A, _}, {_, N, _, _, _} | _] when is_integer(N) ->
                     {Line, N - 1};
                 [{_, Line, F, A, _} | _] ->
@@ -364,14 +444,16 @@ function_range(_, _M, _F, _A) ->
 % filter lines by function
 function_lines(MFA, LinesData) ->
     {Start, End} = function_range(MFA),
-    lists:filter(fun (LineData) ->
-                     Line = proplists:get_value(number, element(2, LineData)),
-                     Line > Start andalso Line =< End
-                 end, LinesData).
+    lists:filter(
+        fun(LineData) ->
+            Line = proplists:get_value(number, element(2, LineData)),
+            Line > Start andalso Line =< End
+        end,
+        LinesData
+    ).
 
 dedup(List) -> dedup(lists:sort(List), []).
 
 dedup([], Agg) -> lists:reverse(Agg);
-dedup([{Pos, C1}, {Pos, C2} | Rest], Agg) ->
-    dedup([{Pos, C1 + C2} | Rest], Agg);
+dedup([{Pos, C1}, {Pos, C2} | Rest], Agg) -> dedup([{Pos, C1 + C2} | Rest], Agg);
 dedup([Entry | Rest], Agg) -> dedup(Rest, [Entry | Agg]).
