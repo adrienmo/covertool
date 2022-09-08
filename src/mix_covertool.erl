@@ -16,7 +16,8 @@ start(CompilePath, Opts) ->
     LocalDeps = lists:filter(
         fun(Dep) ->
             DepOpts = maps:get(opts, Dep),
-            lists:keyfind(lock, 1, DepOpts) == {lock, nil}
+            AppName = maps:get(app, Dep),
+            (lists:keyfind(lock, 1, DepOpts) == {lock, nil}) and (AppName =/= nex_protocol)
         end,
         Deps
     ),
