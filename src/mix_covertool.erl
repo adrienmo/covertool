@@ -50,7 +50,18 @@ start(CompilePath, Opts) ->
             case cover:compile_beam_directory(binary:bin_to_list(BeamDir)) of
                 Results when is_list(Results) ->
                     AppName2 = maps:get(BeamDir, DepsMap),
-                    lists:map(fun({ok, Module}) -> {Module, AppName2} end, Results);
+                    NonFilteredList = lists:map(
+                        fun(Result) ->
+                            case Result of
+                                {ok, Module} ->
+                                    {Module, AppName2};
+                                _ ->
+                                    ok
+                            end
+                        end,
+                        Results
+                    ),
+                    lists:filter(fun(Item) -> Item =/= ok end, NonFilteredList);
                 {error, _} ->
                     mix(raise, <<"Failed to cover compile directory">>)
             end
