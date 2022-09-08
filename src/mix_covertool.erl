@@ -30,7 +30,6 @@ start(CompilePath, Opts) ->
     ),
     LocalDepsDirectories = lists:map(
         fun(Dep) ->
-            erlang:display(Dep),
             AppName = maps:get(app, Dep),
             {
                 <<BaseCompilePath/binary, <<"/">>/binary, (atom_to_binary(AppName))/binary,
@@ -70,8 +69,6 @@ start(CompilePath, Opts) ->
         beams = BeamDirs,
         summary = Summary
     },
-
-    erlang:display(Config),
 
     Modules = cover:modules(),
 

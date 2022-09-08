@@ -168,7 +168,6 @@ generate_report(Config, Modules) ->
     ok.
 
 generate_packages(_, PrefixLen, Modules, ModuleMapping) ->
-    erlang:display(Modules),
     PackageAndModules =
         lists:foldl(
             fun(Module, Acc) ->
