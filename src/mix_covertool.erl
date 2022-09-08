@@ -8,25 +8,54 @@
 %% ===================================================================
 %% Mix plugin callbacks
 %% ===================================================================
-start( CompilePath, Opts ) ->
+start(CompilePath, Opts) ->
     _ = cover:start(),
 
-    case cover:compile_beam_directory(binary:bin_to_list(CompilePath)) of
-        Results when is_list(Results) ->
-            ok;
-        {error, _} ->
-            mix(raise, <<"Failed to cover compile directory">>)
-    end,
+    BaseCompilePath = 'Elixir.Path':expand(<<CompilePath/binary, <<"../../..">>/binary>>),
+    Deps = 'Elixir.Mix.Dep':cached(),
+    LocalDeps = lists:filter(
+        fun(Dep) ->
+            DepOpts = maps:get(opts, Dep),
+            lists:keyfind(lock, 1, DepOpts) == {lock, nil}
+        end,
+        Deps
+    ),
+    LocalDepsDirectories = lists:map(
+        fun(Dep) ->
+            AppName = maps:get(app, Dep),
+            <<BaseCompilePath/binary, <<"/">>/binary, (atom_to_binary(AppName))/binary,
+                <<"/ebin">>/binary>>
+        end,
+        LocalDeps
+    ),
+
+    BeamDirs = LocalDepsDirectories ++ [CompilePath],
+    lists:map(
+        fun(BeamDir) ->
+            case cover:compile_beam_directory(binary:bin_to_list(BeamDir)) of
+                Results when is_list(Results) ->
+                    ok;
+                {error, _} ->
+                    mix(raise, <<"Failed to cover compile directory">>)
+            end
+        end,
+        BeamDirs
+    ),
 
     AppName = proplists:get_value(app, mix_project(config)),
     {ok, SrcDir} = file:get_cwd(),
-    BeamDir = binary:bin_to_list(mix_project(compile_path)),
     Summary = proplists:get_bool(summary, Opts),
-    Config = #config{appname = AppName, sources = [SrcDir], beams = [BeamDir],
-                     summary = Summary},
+    Config = #config{
+        appname = AppName,
+        sources = [SrcDir],
+        beams = BeamDirs,
+        summary = Summary
+    },
+
+    Modules = cover:modules(),
 
     fun() ->
-        covertool:generate_report(Config, cover:modules())
+        covertool:generate_report(Config, Modules)
     end.
 
 %% ===================================================================
